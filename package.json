@@ -1,0 +1,19 @@
+{
+  "name": "line-router",
+  "version": "0.5.0",
+  "description": "Simple Router",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qileroro/line-router"
+  },
+  "keywords": [
+    "router"
+  ],
+  "author": "Kevin Wang <qileroro@qq.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/qileroro/line-router/issues"
+  },
+  "homepage": "https://github.com/qileroro/line-router"
+}
