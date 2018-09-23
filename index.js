@@ -1,87 +1,130 @@
 'use strict'
 
-const routes = {};
-
-function router(req, res) {
-  var [handler, params] = matchRoute(req.method, req.url);
-  req.params = params;
-
-  handler = handler ? handler : notfound_handler;
-  doHandler(req, res, handler);
+function LineRouter() {
+  this.segmentRouter = new SegmentRouter();
+  this.notfoundHandler = defaultNotFoundHandler;
+  this.errorHandler = defaultErrorHandler;
+  this.handler = this.handler.bind(this);
 }
 
-function doHandler(req, res, handler, err) {
-  var rv = err ? handler(req, res, err) : handler(req, res);
-  if (rv && rv['then']) {
-    rv.then(function(resp) {
-      res.end(resp);
-    }).catch(function(e) {
-      if (!err) {
-        doHandler(req, res, error_handler, e);
-      } else {
-        res.end();
-      }
-    });
-  } else if(rv && !res.finished) {
+LineRouter.prototype = {
+  handler(req, res) {
+    var matchResult = this.matchRoute(req.method, req.url);
+    console.log(req.url, matchResult);
+  
+    if (matchResult) {
+      var {handler, params} = matchResult;
+      req.params = params;
+    } else {
+      var handler = this.notfoundHandler;
+    }
+    
     try {
-      res.end(rv);
-    } catch (e) {
-      if (!err) {
-        doHandler(req, res, error_handler, e);
-      } else {
-        res.end();
+      callHandler(handler, req, res);
+    } catch (err) {
+      var errorHandler = this.errorHandler;
+      try {
+        callHandler(errorHandler, req, res, err);
+      } catch (err) {
+        res.statusCode = 500;
+        res.end('Server Error');
       }
     }
-  } else {
-    res.end();
+  },
+
+  get(path, handler) { this.addRoute('get', path, handler) },
+
+  head(path, handler) { this.addRoute('head', path, handler) },
+
+  post(path, handler) { this.addRoute('post', path, handler) },
+
+  put(path, handler) { this.addRoute('put', path, handler) },
+
+  delete(path, handler) { this.addRoute('delete', path, handler) },
+
+  connect(path, handler) { this.addRoute('connect', path, handler) },
+
+  options(path, handler) { this.addRoute('options', path, handler) },
+
+  trace(path, handler) { this.addRoute('trace', path, handler) },
+
+  patch(path, handler) { this.addRoute('patch', path, handler) },
+
+  addRoute(method, path, handler) {
+    var originalSegments = segmentUrl(method, path);
+    var objParams = path.indexOf("<") !== -1;
+    var mappings = objParams && originalSegments.filter(isArgumentSegment).map(getMapping);
+  
+    var segments = originalSegments.map((segment) => segment[0] === "<" ? "*" : segment);
+    var target = {handler, mappings};
+    this.segmentRouter.add(segments, target);
+  },
+
+  notfound(handler) {
+    this.notfoundHandler = handler;
+  },
+
+  error(handler) {
+    this.errorHandler = handler;
+  },
+
+  matchRoute(method, url) {
+    var segments = segmentUrl(method, url);
+    var matchResult = this.segmentRouter.match(segments);
+    if (matchResult) {
+      var {target: {handler, mappings}, params} = matchResult;
+      if (mappings) {
+        var objParams = {};
+        for (var i=0; i<mappings.length; i++) {
+          var {name, type} = mappings[i];
+          if (type === 'number' && !(/^[0-9]+$/.test(params[i]))) { return; }
+          objParams[name] = type === 'number' ? Number(params[i]) : params[i];
+        }
+        return {handler, params: objParams};
+      } else {
+        return {handler, params};
+      }
+    }
   }
 }
 
-router.get = (path, handler) => { addRoute("get", path, handler) };
-router.head = (path, handler) => { addRoute("head", path, handler) };
-router.post = (path, handler) => { addRoute("post", path, handler) };
-router.put = (path, handler) => { addRoute("put", path, handler) };
-router.delete = (path, handler) => { addRoute("delete", path, handler) };
-router.connect = (path, handler) => { addRoute("connect", path, handler) };
-router.options = (path, handler) => { addRoute("options", path, handler) };
-router.trace = (path, handler) => { addRoute("trace", path, handler) };
-router.patch = (path, handler) => { addRoute("patch", path, handler) };
-
-router.notfound = (fn) => { notfound_handler = fn; }
-router.error = (fn) => { error_handler = fn; }
-
-var notfound_handler = (req, res) => {
-  res.statusCode = 404;
-  res.end('Not found');
+function SegmentRouter() {
+  this.routes = {};
 }
 
-var error_handler = (req, res, err) => {
-  res.statusCode = 500;
-  res.end('Server Error');
+SegmentRouter.prototype = {
+  add(segments, target) {
+    var current = this.routes;
+    for (let segment of segments) {
+      if (!(segment in current)) {
+        current[segment] = {};
+      }
+      current = current[segment];
+    }
+    current["/"] = target;
+  },
+
+  match(segments) {
+    var cursor = this.routes;
+    var params = [];
+    for (let segment of segments) {
+      if (segment in cursor) {
+        cursor = cursor[segment];
+      } else if ('*' in cursor) {
+        params.push(segment);
+        cursor = cursor['*'];
+      } else {
+        cursor = null;
+        break;
+      }
+    }
+    if (cursor && cursor['/']) {
+      return {target: cursor['/'], params};
+    }
+  }
 }
 
-//   addRoute("get", "/users/<userid>/posts", handler)
-//   matchRoute("GET", "/users/1001/posts")
-//   --> [handler, [userid: "1001"]]
-
-//   addRoute("get", "/users/*/posts/<postid:number>", handler)
-//   matchRoute("GET", "/users/1001/posts/10000")
-//   --> [handler, ["1001", postid: 10000]]
-
-function addRoute(method, path, handler) {
-  var segments = segment(method, path);
-  var isObjParams = path.indexOf("<") !== -1;
-  var convertedSegments = segments.map((item) => item[0] === "<" ? "*" : item);
-  add(convertedSegments, getResolveFunc(isObjParams, handler, segments));
-}
-
-function matchRoute(method, url) {
-  var segments = segment(method, url);
-  var [resolve, params] = match(segments);
-  return resolve ? resolve(params) : [null, null];
-}
-
-function segment(method, url) {
+function segmentUrl(method, url) {
   var segments = removeQuery(url).split('/').filter((item) => item.trim());
   return [method.toUpperCase(), ...segments];
 }
@@ -91,79 +134,52 @@ function removeQuery(url) {
   return index === -1 ? url : url.substr(0, index);
 }
 
-function getResolveFunc(isObjParams, handler, segments) {
-  if (!isObjParams) {
-    return (params) => [handler, params];
-  }
+function isArgumentSegment(segment) {
+  return segment === '*' || segment[0] === '<';
+}
 
-  // [{index, name, type}]
-  var mappings = segments.filter((item) => item === '*' || item[0] === '<').map((item, index) => {
-    return item === '*' ? [index, 'string'] : item.substring(1, item.length-1).split(':');
-  });
+function getMapping(segment, index) {
+  var [name, type] = segment === '*' ? [String(index), 'string'] : segment.substring(1, segment.length-1).split(':');
+  return {name, type};
+}
 
-  // var setFunctions = segments.filter((item) => item === '*' || item[0] === '<').map((item) => {
-  //   if (item === '*') {
-  //     return (result, value) => { result.push(value); };
-  //   } else {
-  //     var [name, type] = item.substring(1, item.length-1).split(':');
-  //     if (["string", "number", undefined].indexOf(type) === -1) {
-  //       throw new Error('Unsupported Type: ' + type);
-  //     }
-  //     return (result, value) => { 
-  //       result.push(value); 
-  //       result[name] = type === 'number' ? Number(value) : value; 
-  //     };
-  //   }
-  // });
+function callHandler(handler, req, res, err) {
+  var resp = err ? handler(err, req, res) : handler(req, res);
 
-  return (params) => {
-    var result = {};
-    mappings.forEach(function([name, type], index) {
-      result[name] = type === 'number' ? Number(params[index]) : params[index];
+  if (resp != undefined && resp['then']) {
+    resp.then((resp) => {
+      endRes(res, resp, err && 500);
+    }).catch((e) => {
+      throw e;
     });
-    return [handler, result];
-    // var result = [];
-    // for (var i=0; i<params.length; i++) {
-    //   setFunctions[i](result, params[i]);
-    // }
-    // return [handler, result];
-  };
-}
-
-//   add(["get", "users", "*", "posts"], "target1")
-//   match(["get", "users", "1001", "posts"]) 
-//   --> ["target1", ["1001"]]
-
-function add(segments, target) {
-  var current = routes;
-  for (let segment of segments) {
-    if (!(segment in current)) {
-      current[segment] = {};
-    }
-    current = current[segment];
-  }
-  current["/"] = target;
-}
-
-function match(segments) {
-  var current = routes;
-  var params = [];
-  for (let segment of segments) {
-    if (segment in current) {
-      current = current[segment];
-    } else if ('*' in current) {
-      params.push(segment);
-      current = current['*'];
-    } else {
-      current = null;
-      break;
-    }
-  }
-  if (current && current['/']) {
-    return [current['/'], params];
   } else {
-    return [null, null];
+    endRes(res, resp, err && 500);
   }
 }
 
-module.exports = router;
+function endRes(res, r, statusCode) {
+  if (res.finished) {
+    return;
+  }
+  if (statusCode) {
+    res.statusCode = statusCode;
+  }
+  if (typeof(r) != "undefined" && r != null && r.constructor == String) {
+    res.end(r);
+  } else {
+    res.end();
+  }
+}
+
+function defaultNotFoundHandler(req, res) {
+  res.statusCode = 404;
+  res.end('Not Found');
+}
+
+function defaultErrorHandler(err, req, res) {
+  var {statusCode=500} = err;
+  res.statusCode = statusCode;
+  res.end();
+}
+
+module.exports = LineRouter;
