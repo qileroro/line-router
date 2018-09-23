@@ -10,7 +10,6 @@ function LineRouter() {
 LineRouter.prototype = {
   handler(req, res) {
     var matchResult = this.matchRoute(req.method, req.url);
-    console.log(req.url, matchResult);
   
     if (matchResult) {
       var {handler, params} = matchResult;
