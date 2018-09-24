@@ -10,25 +10,15 @@ function LineRouter() {
 LineRouter.prototype = {
   handler(req, res) {
     var matchResult = this.matchRoute(req.method, req.url);
-  
-    if (matchResult) {
-      var {handler, params} = matchResult;
-      req.params = params;
-    } else {
-      var handler = this.notfoundHandler;
-    }
+    var {handler, params} = matchResult || {handler: this.notfoundHandler};
+    req.params = params;
     
-    try {
-      callHandler(handler, req, res);
-    } catch (err) {
-      var errorHandler = this.errorHandler;
-      try {
-        callHandler(errorHandler, req, res, err);
-      } catch (err) {
+    callHandler(handler, req, res).catch((err) => {
+      callHandler(this.errorHandler, req, res, err).catch((err) => {
         res.statusCode = 500;
         res.end('Server Error');
-      }
-    }
+      });
+    });
   },
 
   get(path, handler) { this.addRoute('get', path, handler) },
@@ -143,17 +133,20 @@ function getMapping(segment, index) {
 }
 
 function callHandler(handler, req, res, err) {
-  var resp = err ? handler(err, req, res) : handler(req, res);
-
-  if (resp != undefined && resp['then']) {
-    resp.then((resp) => {
+  return new Promise((resolve, reject) => {
+    var resp = err ? handler(err, req, res) : handler(req, res);
+    if (resp != undefined && resp['then']) {
+      resp.then((resp) => {
+        endRes(res, resp, err && 500);
+        resolve();
+      }).catch((e) => {
+        reject(e);
+      });
+    } else {
       endRes(res, resp, err && 500);
-    }).catch((e) => {
-      throw e;
-    });
-  } else {
-    endRes(res, resp, err && 500);
-  }
+      resolve();
+    }
+  });
 }
 
 function endRes(res, r, statusCode) {
@@ -178,7 +171,7 @@ function defaultNotFoundHandler(req, res) {
 function defaultErrorHandler(err, req, res) {
   var {statusCode=500} = err;
   res.statusCode = statusCode;
-  res.end();
+  res.end('Server Error');
 }
 
 module.exports = LineRouter;

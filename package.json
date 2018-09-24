@@ -1,6 +1,6 @@
 {
   "name": "line-router",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Simple Router",
   "main": "index.js",
   "repository": {
