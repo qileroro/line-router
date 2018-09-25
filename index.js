@@ -2,25 +2,9 @@
 
 function LineRouter() {
   this.segmentRouter = new SegmentRouter();
-  this.notfoundHandler = defaultNotFoundHandler;
-  this.errorHandler = defaultErrorHandler;
-  this.handler = this.handler.bind(this);
 }
 
 LineRouter.prototype = {
-  handler(req, res) {
-    var matchResult = this.matchRoute(req.method, req.url);
-    var {handler, params} = matchResult || {handler: this.notfoundHandler};
-    req.params = params;
-    
-    callHandler(handler, req, res).catch((err) => {
-      callHandler(this.errorHandler, req, res, err).catch((err) => {
-        res.statusCode = 500;
-        res.end('Server Error');
-      });
-    });
-  },
-
   get(path, handler) { this.addRoute('get', path, handler) },
 
   head(path, handler) { this.addRoute('head', path, handler) },
@@ -47,14 +31,6 @@ LineRouter.prototype = {
     var segments = originalSegments.map((segment) => segment[0] === "<" ? "*" : segment);
     var target = {handler, mappings};
     this.segmentRouter.add(segments, target);
-  },
-
-  notfound(handler) {
-    this.notfoundHandler = handler;
-  },
-
-  error(handler) {
-    this.errorHandler = handler;
   },
 
   matchRoute(method, url) {
@@ -130,48 +106,6 @@ function isArgumentSegment(segment) {
 function getMapping(segment, index) {
   var [name, type] = segment === '*' ? [String(index), 'string'] : segment.substring(1, segment.length-1).split(':');
   return {name, type};
-}
-
-function callHandler(handler, req, res, err) {
-  return new Promise((resolve, reject) => {
-    var resp = err ? handler(err, req, res) : handler(req, res);
-    if (resp != undefined && resp['then']) {
-      resp.then((resp) => {
-        endRes(res, resp, err && 500);
-        resolve();
-      }).catch((e) => {
-        reject(e);
-      });
-    } else {
-      endRes(res, resp, err && 500);
-      resolve();
-    }
-  });
-}
-
-function endRes(res, r, statusCode) {
-  if (res.finished) {
-    return;
-  }
-  if (statusCode) {
-    res.statusCode = statusCode;
-  }
-  if (typeof(r) != "undefined" && r != null && r.constructor == String) {
-    res.end(r);
-  } else {
-    res.end();
-  }
-}
-
-function defaultNotFoundHandler(req, res) {
-  res.statusCode = 404;
-  res.end('Not Found');
-}
-
-function defaultErrorHandler(err, req, res) {
-  var {statusCode=500} = err;
-  res.statusCode = statusCode;
-  res.end('Server Error');
 }
 
 module.exports = LineRouter;
